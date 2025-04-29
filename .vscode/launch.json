@@ -1,0 +1,11 @@
+{
+    "configurations": [
+        {
+            "name": "NN Training",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.main",
+            "console": "integratedTerminal"
+        }
+    ]
+}
