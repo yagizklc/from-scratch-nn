@@ -6,6 +6,17 @@
             "request": "launch",
             "module": "src.main",
             "console": "integratedTerminal"
+        },
+        {
+            "name": "Test",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "-v",
+                "tests/test_load.py"
+            ],
+            "console": "integratedTerminal"
         }
     ]
 }

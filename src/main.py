@@ -105,17 +105,9 @@ def main() -> None:
                 input_shape=(3, 224, 224), kernel_size=3, num_filters=32
             ),
             MaxPoolingLayer(input_shape=(32, 222, 222), pool_size=2),
-            ConvolutionalLayer(
-                input_shape=(32, 111, 111), kernel_size=3, num_filters=64
-            ),
-            MaxPoolingLayer(input_shape=(64, 109, 109), pool_size=2),
-            ConvolutionalLayer(
-                input_shape=(64, 54, 54), kernel_size=3, num_filters=128
-            ),
-            MaxPoolingLayer(input_shape=(128, 52, 52), pool_size=10),
             # fully connected layers
-            Layer(input_size=128 * 5 * 5, output_size=64, activation=ReLU()),
-            Layer(input_size=64, output_size=10, activation=Softmax()),
+            Layer(input_size=128 * 5 * 5, output_size=10, activation=Softmax()),
+            Layer(input_size=10, output_size=10, activation=ReLU()),
         ]
     )
 
