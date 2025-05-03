@@ -4,7 +4,6 @@ import numpy as np
 
 from src.activation_function import ActivationFunction, ReLU
 from src.vision import ConvolutionalLayer, MaxPoolingLayer
-from src.loss_function import MSE, LossFunction
 
 
 class Perceptron:
@@ -62,9 +61,9 @@ class Layer:
 
     def backward(self, gradient: np.ndarray, learning_rate: float) -> np.ndarray:
         # Ensure input exists before accessing its shape
-        assert (
-            self.neurons[0].input is not None
-        ), "Forward pass must be called before backward pass"
+        assert self.neurons[0].input is not None, (
+            "Forward pass must be called before backward pass"
+        )
 
         next_gradient = np.zeros(self.neurons[0].input.shape)
 
@@ -75,7 +74,9 @@ class Layer:
 
 
 class NeuralNetwork:
-    def __init__(self, layers: list[Layer | ConvolutionalLayer | MaxPoolingLayer]) -> None:
+    def __init__(
+        self, layers: list[Layer | ConvolutionalLayer | MaxPoolingLayer]
+    ) -> None:
         self.layers = layers
 
     def add_layer(
@@ -161,66 +162,3 @@ class NeuralNetwork:
         """
         for layer in reversed(self.layers):
             gradient = layer.backward(gradient=gradient, learning_rate=learning_rate)
-
-    def train(
-        self,
-        x: np.ndarray,
-        y: np.ndarray,
-        epochs: int = 1000,
-        learning_rate: float = 0.01,
-        loss_function: LossFunction = MSE(),
-        batch_size: Optional[int] = None,
-    ) -> list[float]:
-        """
-        Train the neural network.
-
-        Args:
-            x: Input data (for convolutional layers, shape should be (batch_size, channels, height, width))
-            y: Target data
-            epochs: Number of training epochs
-            learning_rate: Learning rate for parameter updates
-            loss_function: Loss function to use
-            batch_size: Size of mini-batches (if None, use all data)
-
-        Returns:
-            List of loss values for each epoch
-        """
-        num_samples = x.shape[0]
-        losses = []
-
-        # Use full batch if batch_size is None
-        batch_size = num_samples if batch_size is None else batch_size
-
-        for epoch in range(epochs):
-            epoch_loss = 0.0
-
-            # Shuffle data for each epoch
-            indices = np.random.permutation(num_samples)
-            x_shuffled = x[indices]
-            y_shuffled = y[indices]
-
-            # Mini-batch training
-            for i in range(0, num_samples, batch_size):
-                x_batch = x_shuffled[i : i + batch_size]
-                y_batch = y_shuffled[i : i + batch_size]
-
-                # Forward pass
-                y_pred = self.forward(x_batch)
-
-                # Calculate loss
-                batch_loss = loss_function.function(y_batch, y_pred)
-                epoch_loss += batch_loss * len(x_batch) / num_samples
-
-                # Calculate gradients
-                gradient = loss_function.derivative(y_batch, y_pred)
-
-                # Backward pass
-                self.backward(gradient, learning_rate)
-
-            losses.append(epoch_loss)
-
-            # Optional: Print progress
-            if epoch % 100 == 0:
-                print(f"Epoch {epoch}: Loss = {epoch_loss:.4f}")
-
-        return losses

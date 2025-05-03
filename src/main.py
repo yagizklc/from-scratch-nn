@@ -1,123 +1,216 @@
+import csv
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
+import tqdm
 from PIL import Image
 
 from src.activation_function import ReLU, Softmax
+from src.loss_function import MSE, LossFunction
 from src.network import ConvolutionalLayer, Layer, MaxPoolingLayer, NeuralNetwork
-from src.loss_function import MSE
+
+# image_path, label
+Dataset = list[tuple[Path, str]]
+SPORTS = ["basketball"]  # , "football", "tennis", "volleyball", "golf"]
+NUM_CLASSES = 100
+INPUT_SIZE = (224, 224)
+BATCH_SIZE = 32
+EPOCHS = 50
+LEARNING_RATE = 0.01
+LOSS_FUNCTION = MSE()
 
 
-def train(nn: NeuralNetwork, train_data: list[tuple[Path, Path]]) -> None:
+def train(
+    nn: NeuralNetwork,
+    training_data: Dataset,
+    num_classes: int = NUM_CLASSES,
+    input_size: tuple[int, int] = INPUT_SIZE,
+    batch_size: int = BATCH_SIZE,
+    epochs: int = EPOCHS,
+    learning_rate: float = LEARNING_RATE,
+    loss_function: LossFunction = LOSS_FUNCTION,
+) -> list[float]:
     """training loop for the neural network"""
 
     # Process all images and labels
     all_images = []
     all_labels = []
 
-    for image_path, label_path in train_data:
-        assert image_path.exists()
-        assert label_path.exists()
-        assert image_path.stem == label_path.stem
+    for image_path, label in tqdm.tqdm(training_data, desc="Processing training data"):
+        if not image_path.exists() or not image_path.suffix.endswith(".jpg"):
+            continue
 
-        # Load and preprocess image (normalize to [0,1])
-        img = Image.open(image_path)
-        img = img.resize((224, 224))  # Resize to match network input
-        img_array = np.array(img).transpose(2, 0, 1) / 255.0  # CHW format, normalized
+        # load image as
+        img_array = preprocess_image(image_path=image_path, input_size=input_size)
         all_images.append(img_array)
 
         # Load label (assuming label file contains class index)
-        label_text = label_path.read_text().strip()
-
-        # Convert label to one-hot encoding (assuming 10 classes)
-        label_idx = int(label_text)
-        one_hot = np.zeros(10)
-        one_hot[label_idx] = 1
+        one_hot = np.zeros(num_classes)
+        one_hot[int(label)] = 1
         all_labels.append(one_hot)
 
     # Convert to numpy arrays
+    print(
+        f"Converting to numpy arrays: {len(all_images)} images, {len(all_labels)} labels"
+    )
     X = np.array(all_images)
     y = np.array(all_labels)
 
     # Train the neural network
-    nn.train(
-        x=X, y=y, epochs=50, learning_rate=0.01, loss_function=MSE(), batch_size=32
-    )
+    num_samples = X.shape[0]
+    losses: list[float] = []
+
+    # Use full batch if batch_size is None
+    batch_size = num_samples if batch_size is None else batch_size
+
+    for epoch in tqdm.tqdm(range(epochs), desc="Training"):
+        epoch_loss = 0.0
+
+        # Shuffle data for each epoch
+        indices = np.random.permutation(num_samples)
+        x_shuffled = X[indices]
+        y_shuffled = y[indices]
+
+        # Mini-batch training
+        for i in tqdm.tqdm(
+            range(0, num_samples, batch_size),
+            desc=f"Training epoch {epoch} batch",
+        ):
+            x_batch = x_shuffled[i : i + batch_size]
+            y_batch = y_shuffled[i : i + batch_size]
+
+            # Forward pass
+            y_pred = nn.forward(x_batch)
+
+            # Calculate loss
+            batch_loss = loss_function.function(y_batch, y_pred)
+            epoch_loss += batch_loss * len(x_batch) / num_samples
+
+            # Calculate gradients
+            gradient = loss_function.derivative(y_batch, y_pred)
+
+            # Backward pass
+            nn.backward(gradient, learning_rate)
+
+        losses.append(epoch_loss)
+
+    return losses
 
 
 def predict(nn: NeuralNetwork, image_path: Path) -> str:
     """predict the image label using the neural network"""
     assert image_path.exists()
-    img = Image.open(image_path)
-    img = img.resize((224, 224))  # Resize to match network input
-    img_array = np.array(img).transpose(2, 0, 1) / 255.0  # CHW format, normalized
+    img_array = preprocess_image(image_path)
     prediction = nn.forward(img_array)
     return str(np.argmax(prediction))
 
 
-def accuracy(nn: NeuralNetwork, test_data: list[tuple[Path, Path]]) -> float:
+def accuracy(nn: NeuralNetwork, test_data: Dataset) -> float:
     """calculate the accuracy of the neural network on the test data"""
     correct = 0
     total = 0
-    for image_path, label_path in test_data:
+    for image_path, label in tqdm.tqdm(test_data, desc="Calculating accuracy"):
         prediction = predict(nn, image_path)
-        if prediction == label_path.stem:
+        if prediction == label:
             correct += 1
         total += 1
     return correct / total
 
 
-def load_train_data() -> list[tuple[Path, Path]]:
-    """
-    load the data from the data/car/train/images and data/car/train/labels
-    returns a list of tuples of the form (image_path, label_path)
-    """
+def preprocess_image(
+    image_path: Path,
+    input_size: tuple[int, int] = (224, 224),
+) -> np.ndarray:
+    """preprocess the image"""
+    img = Image.open(image_path)
+    img = img.convert("RGB")  # Ensure the image is in RGB format
+    img = img.resize(input_size)  # Resize to match network input
+    img_array = np.array(img)
 
-    train_X = sorted(list(Path("data/car/train/images").glob("*.jpg")))
-    train_y = sorted(list(Path("data/car/train/labels").glob("*.txt")))
-    zipped = list(zip(train_X, train_y))
-    return zipped
+    # Check if the image has 3 channels (RGB)
+    if len(img_array.shape) == 3 and img_array.shape[2] == 3:
+        img_array = img_array.transpose(2, 0, 1)  # CHW format
+    elif len(img_array.shape) == 2:  # Grayscale image
+        img_array = np.expand_dims(img_array, axis=0)  # Add channel dimension
+    else:  # Handle other cases like RGBA
+        img_array = img_array[:, :, :3].transpose(
+            2, 0, 1
+        )  # Take first 3 channels and transpose
+
+    return img_array / 255.0  # normalize
 
 
-def load_test_data() -> list[tuple[Path, Path]]:
+def load_data(
+    stage: Literal["train", "test", "valid"],
+    sport_names: list[str] | None = None,
+) -> Dataset:
     """
-    load the data from the data/car/test/images and data/car/test/labels
-    returns a list of tuples of the form (image_path, label_path)
+    load the data from CSV
+    optionally filter for a specific sport category
     """
+    # read the csv file
+    csv_data = Path("data/imgcls/sports.csv").read_text()
+    csv_reader = csv.reader(csv_data.splitlines())
 
-    test_X = sorted(list(Path("data/car/test/images").glob("*.jpg")))
-    test_y = sorted(list(Path("data/car/test/labels").glob("*.txt")))
-    zipped = list(zip(test_X, test_y))
-    return zipped
+    # Filter by stage (train/test/valid)
+    dataset = [row for row in csv_reader if row[3] == stage]
+
+    # Filter by sport name if provided
+    if sport_names:
+        dataset = [row for row in dataset if row[2] in sport_names]
+
+    X = tqdm.tqdm(
+        [Path(f"data/imgcls/{row[1]}") for row in dataset],
+        desc=f"Loading {stage} data",
+    )
+    y = [row[0] for row in dataset]  # get the class id, not the label
+
+    return list(zip(X, y))
 
 
 def main() -> None:
-    """Convolutional Neural Network"""
+    """Convolutional Neural Network with shallower architecture"""
 
-    # load data
-    train_data = load_train_data()
-
-    # define network architecture
+    # define network architecture with reduced depth for faster execution
     nn = NeuralNetwork(
         layers=[
-            # conv & pooling layers
+            # First convolutional block
             ConvolutionalLayer(
-                input_shape=(3, 224, 224), kernel_size=3, num_filters=32
-            ),
-            MaxPoolingLayer(input_shape=(32, 222, 222), pool_size=2),
-            # fully connected layers
-            Layer(input_size=128 * 5 * 5, output_size=10, activation=Softmax()),
-            Layer(input_size=10, output_size=10, activation=ReLU()),
+                input_shape=(3, 224, 224), kernel_size=3, num_filters=32, padding=1
+            ),  # Output: (32, 224, 224)
+            MaxPoolingLayer(
+                input_shape=(32, 224, 224), pool_size=4
+            ),  # Output: (32, 56, 56)
+            # Second convolutional block
+            ConvolutionalLayer(
+                input_shape=(32, 56, 56), kernel_size=3, num_filters=64, padding=1
+            ),  # Output: (64, 56, 56)
+            MaxPoolingLayer(
+                input_shape=(64, 56, 56), pool_size=4
+            ),  # Output: (64, 14, 14)
+            # Fully connected layers
+            Layer(input_size=64 * 14 * 14, output_size=256, activation=ReLU()),
+            Layer(input_size=256, output_size=NUM_CLASSES, activation=Softmax()),
         ]
     )
 
-    # training loop
-    train(nn, train_data)
-    print("Training complete: ", nn)
+    # training loop with single sport
+    training_data = load_data("train", sport_names=SPORTS)
+    train(
+        nn=nn,
+        training_data=training_data,
+        num_classes=NUM_CLASSES,
+        input_size=INPUT_SIZE,
+        batch_size=BATCH_SIZE,
+        epochs=EPOCHS,
+        learning_rate=LEARNING_RATE,
+        loss_function=LOSS_FUNCTION,
+    )
 
     # testing loop
-    test_data = load_test_data()
-    acc = accuracy(nn, test_data)
+    testing_data = load_data("test", sport_names=SPORTS)
+    acc = accuracy(nn, testing_data)
     print(f"Accuracy: {acc:.2f}")
 
 
