@@ -1,9 +1,9 @@
 from typing import Optional
-from src.base import AbstractLayer
 
 import numpy as np
 
 from src.activation_function import ActivationFunction, ReLU
+from src.base import AbstractLayer
 
 
 class Perceptron:
@@ -17,11 +17,11 @@ class Perceptron:
         self.weighted_sum = None
         self.output = None
 
-    def forward(self, x: np.ndarray) -> float:
+    def forward(self, x: np.ndarray) -> np.ndarray:
         self.input = x
         self.weighted_sum = np.dot(x, self.weights) + self.bias
         self.output = self.activation(self.weighted_sum)
-        return self.output
+        return np.asarray(self.output)
 
     def backward(self, gradient: float, learning_rate: float) -> np.ndarray:
         # Gradient of activation function
@@ -51,23 +51,47 @@ class PerceptronLayer(AbstractLayer):
         output_size: int,
         activation: Optional[ActivationFunction] = None,
     ) -> None:
-        self.neurons = [
-            Perceptron(input_size=input_size, activation=activation)
-            for _ in range(output_size)
-        ]
+        self.weights = np.random.randn(input_size, output_size)
+        self.biases = np.random.randn(output_size)
+        self.activation = activation or ReLU()
+        self.input = None
+        self.output = None
 
     def forward(self, x: np.ndarray) -> np.ndarray:
-        return np.array([neuron.forward(x=x) for neuron in self.neurons])
+        # Store input for backward pass
+        self.input = x
+
+        # Calculate weighted sum: (batch_size, output_size)
+        z = np.dot(x, self.weights) + self.biases
+
+        # Apply activation function
+        a = np.asarray(self.activation(z))
+        self.output = a
+
+        return a
 
     def backward(self, gradient: np.ndarray, learning_rate: float) -> np.ndarray:
-        # Ensure input exists before accessing its shape
-        assert self.neurons[0].input is not None, (
-            "Forward pass must be called before backward pass"
-        )
+        batch_size = gradient.shape[0]
 
-        next_gradient = np.zeros(self.neurons[0].input.shape)
+        # Get activation gradient
+        assert self.output is not None, "Forward pass must be called before backward"
+        activation_gradient = self.activation.derivative(self.output)
+        delta = gradient * activation_gradient
 
-        for i, neuron in enumerate(self.neurons):
-            next_gradient += neuron.backward(gradient[i], learning_rate)
+        # Get input gradients
+        input_gradient = np.dot(delta, self.weights.T)
 
-        return next_gradient
+        # Get weight gradients
+        assert self.input is not None, "Forward pass must be called before backward"
+        weight_gradients = np.zeros_like(self.weights)
+        for i in range(batch_size):
+            weight_gradients += np.outer(self.input[i], delta[i])
+
+        # Get bias gradients
+        bias_gradients = np.sum(delta, axis=0)
+
+        # Update weights and biases
+        self.weights -= learning_rate * weight_gradients / batch_size
+        self.biases -= learning_rate * bias_gradients / batch_size
+
+        return input_gradient
