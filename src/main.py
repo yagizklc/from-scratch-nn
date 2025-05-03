@@ -7,14 +7,16 @@ import tqdm
 from PIL import Image
 
 from src.activation_function import ReLU, Softmax
+from src.layers.dense import PerceptronLayer
+from src.layers.vision import ConvolutionalLayer, FlattenLayer, MaxPoolingLayer
 from src.loss_function import MSE, LossFunction
-from src.network import ConvolutionalLayer, Layer, MaxPoolingLayer, NeuralNetwork
+from src.network import NeuralNetwork
 
 # image_path, label
 Dataset = list[tuple[Path, str]]
 SPORTS = ["basketball"]  # , "football", "tennis", "volleyball", "golf"]
 NUM_CLASSES = 100
-INPUT_SIZE = (224, 224)
+INPUT_SIZE = (224, 224)  # Default input size
 BATCH_SIZE = 32
 EPOCHS = 50
 LEARNING_RATE = 0.01
@@ -98,20 +100,24 @@ def train(
     return losses
 
 
-def predict(nn: NeuralNetwork, image_path: Path) -> str:
+def predict(
+    nn: NeuralNetwork, image_path: Path, input_size: tuple[int, int] = INPUT_SIZE
+) -> str:
     """predict the image label using the neural network"""
     assert image_path.exists()
-    img_array = preprocess_image(image_path)
+    img_array = preprocess_image(image_path, input_size=input_size)
     prediction = nn.forward(img_array)
     return str(np.argmax(prediction))
 
 
-def accuracy(nn: NeuralNetwork, test_data: Dataset) -> float:
+def accuracy(
+    nn: NeuralNetwork, test_data: Dataset, input_size: tuple[int, int] = INPUT_SIZE
+) -> float:
     """calculate the accuracy of the neural network on the test data"""
     correct = 0
     total = 0
     for image_path, label in tqdm.tqdm(test_data, desc="Calculating accuracy"):
-        prediction = predict(nn, image_path)
+        prediction = predict(nn, image_path, input_size=input_size)
         if prediction == label:
             correct += 1
         total += 1
@@ -169,29 +175,42 @@ def load_data(
     return list(zip(X, y))
 
 
-def main() -> None:
+def main(input_size: tuple[int, int] = INPUT_SIZE) -> None:
     """Convolutional Neural Network with shallower architecture"""
+
+    # Calculate pooling output dimensions
+    h, w = input_size
+    pool1_h, pool1_w = h // 4, w // 4
+    pool2_h, pool2_w = pool1_h // 4, pool1_w // 4
 
     # define network architecture with reduced depth for faster execution
     nn = NeuralNetwork(
         layers=[
             # First convolutional block
             ConvolutionalLayer(
-                input_shape=(3, 224, 224), kernel_size=3, num_filters=32, padding=1
-            ),  # Output: (32, 224, 224)
+                input_shape=(3, h, w), kernel_size=3, num_filters=32, padding=1
+            ),  # Output: (32, h, w)
             MaxPoolingLayer(
-                input_shape=(32, 224, 224), pool_size=4
-            ),  # Output: (32, 56, 56)
+                input_shape=(32, h, w), pool_size=4
+            ),  # Output: (32, h/4, w/4)
             # Second convolutional block
             ConvolutionalLayer(
-                input_shape=(32, 56, 56), kernel_size=3, num_filters=64, padding=1
-            ),  # Output: (64, 56, 56)
+                input_shape=(32, pool1_h, pool1_w),
+                kernel_size=3,
+                num_filters=64,
+                padding=1,
+            ),  # Output: (64, h/4, w/4)
             MaxPoolingLayer(
-                input_shape=(64, 56, 56), pool_size=4
-            ),  # Output: (64, 14, 14)
+                input_shape=(64, pool1_h, pool1_w), pool_size=4
+            ),  # Output: (64, h/16, w/16)
+            FlattenLayer(),
             # Fully connected layers
-            Layer(input_size=64 * 14 * 14, output_size=256, activation=ReLU()),
-            Layer(input_size=256, output_size=NUM_CLASSES, activation=Softmax()),
+            PerceptronLayer(
+                input_size=64 * pool2_h * pool2_w, output_size=256, activation=ReLU()
+            ),
+            PerceptronLayer(
+                input_size=256, output_size=NUM_CLASSES, activation=Softmax()
+            ),
         ]
     )
 
@@ -201,7 +220,7 @@ def main() -> None:
         nn=nn,
         training_data=training_data,
         num_classes=NUM_CLASSES,
-        input_size=INPUT_SIZE,
+        input_size=input_size,
         batch_size=BATCH_SIZE,
         epochs=EPOCHS,
         learning_rate=LEARNING_RATE,
@@ -210,9 +229,9 @@ def main() -> None:
 
     # testing loop
     testing_data = load_data("test", sport_names=SPORTS)
-    acc = accuracy(nn, testing_data)
+    acc = accuracy(nn, testing_data, input_size=input_size)
     print(f"Accuracy: {acc:.2f}")
 
 
 if __name__ == "__main__":
-    main()
+    main(input_size=(64, 64))

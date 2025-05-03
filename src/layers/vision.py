@@ -2,10 +2,11 @@ from typing import Optional
 
 import numpy as np
 
-from src.activation_function import ReLU, ActivationFunction
+from src.activation_function import ActivationFunction, ReLU
+from src.base import AbstractLayer
 
 
-class ConvolutionalLayer:
+class ConvolutionalLayer(AbstractLayer):
     def __init__(
         self,
         input_shape: tuple[int, int, int],  # (channels, height, width)
@@ -50,7 +51,12 @@ class ConvolutionalLayer:
         if self.padding > 0:
             return np.pad(
                 x,
-                ((0, 0), (self.padding, self.padding), (self.padding, self.padding)),
+                (
+                    (0, 0),
+                    (0, 0),
+                    (self.padding, self.padding),
+                    (self.padding, self.padding),
+                ),
                 mode="constant",
             )
         return x
@@ -116,17 +122,19 @@ class ConvolutionalLayer:
             Gradient for previous layer
         """
         # Ensure input and output exist
-        assert (
-            self.input is not None
-        ), "Forward pass must be called before backward pass"
-        assert (
-            self.output is not None
-        ), "Forward pass must be called before backward pass"
+        assert self.input is not None, (
+            "Forward pass must be called before backward pass"
+        )
+        assert self.output is not None, (
+            "Forward pass must be called before backward pass"
+        )
 
         batch_size = self.input.shape[0]
 
         # Apply activation gradient
-        activation_gradient = np.vectorize(self.activation.derivative)(self.output)
+        activation_gradient = np.vectorize(self.activation.derivative)(
+            self.output_before_activation
+        )
         gradient = gradient * activation_gradient
 
         # Calculate output dimensions
@@ -160,11 +168,63 @@ class ConvolutionalLayer:
                         # Update bias gradients
                         bias_gradients[f] += gradient[b, f, h, w]
 
-                        # Update input gradients (for previous layer)
-                        if self.padding == 0:  # Simplified case for no padding
+        # Calculate input gradients (for previous layer)
+        if self.padding == 0:
+            # Simplified case for no padding
+            for b in range(batch_size):
+                for f in range(self.num_filters):
+                    for h in range(output_height):
+                        h_start = h * self.stride
+                        h_end = h_start + self.kernel_size
+
+                        for w in range(output_width):
+                            w_start = w * self.stride
+                            w_end = w_start + self.kernel_size
+
+                            # Update input gradients
                             input_gradient[b, :, h_start:h_end, w_start:w_end] += (
                                 self.filters[f] * gradient[b, f, h, w]
                             )
+        else:
+            # Handle padded case
+            pad_height = x_padded.shape[2] - self.input.shape[2]
+            pad_width = x_padded.shape[3] - self.input.shape[3]
+            pad_top = pad_height // 2
+            pad_left = pad_width // 2
+
+            for b in range(batch_size):
+                for f in range(self.num_filters):
+                    for h in range(output_height):
+                        h_start = h * self.stride
+                        h_end = h_start + self.kernel_size
+
+                        for w in range(output_width):
+                            w_start = w * self.stride
+                            w_end = w_start + self.kernel_size
+
+                            # Calculate the corresponding region in the input (accounting for padding)
+                            in_h_start = max(0, h_start - pad_top)
+                            in_h_end = min(self.input.shape[2], h_end - pad_top)
+                            in_w_start = max(0, w_start - pad_left)
+                            in_w_end = min(self.input.shape[3], w_end - pad_left)
+
+                            # Only update gradient for the actual input (not padding)
+                            if in_h_end > in_h_start and in_w_end > in_w_start:
+                                # Calculate corresponding filter positions
+                                f_h_start = max(0, pad_top - h_start)
+                                f_w_start = max(0, pad_left - w_start)
+
+                                input_gradient[
+                                    b, :, in_h_start:in_h_end, in_w_start:in_w_end
+                                ] += (
+                                    self.filters[
+                                        f,
+                                        :,
+                                        f_h_start : f_h_start + (in_h_end - in_h_start),
+                                        f_w_start : f_w_start + (in_w_end - in_w_start),
+                                    ]
+                                    * gradient[b, f, h, w]
+                                )
 
         # Update filters and biases
         self.filters -= learning_rate * filter_gradients / batch_size
@@ -173,7 +233,7 @@ class ConvolutionalLayer:
         return input_gradient
 
 
-class MaxPoolingLayer:
+class MaxPoolingLayer(AbstractLayer):
     def __init__(
         self,
         input_shape: tuple[int, int, int],  # (channels, height, width)
@@ -259,15 +319,15 @@ class MaxPoolingLayer:
             Gradient for previous layer
         """
         # Ensure input and output exist
-        assert (
-            self.input is not None
-        ), "Forward pass must be called before backward pass"
-        assert (
-            self.output is not None
-        ), "Forward pass must be called before backward pass"
-        assert (
-            self.max_indices is not None
-        ), "Forward pass must be called before backward pass"
+        assert self.input is not None, (
+            "Forward pass must be called before backward pass"
+        )
+        assert self.output is not None, (
+            "Forward pass must be called before backward pass"
+        )
+        assert self.max_indices is not None, (
+            "Forward pass must be called before backward pass"
+        )
 
         batch_size = self.input.shape[0]
 
@@ -292,3 +352,52 @@ class MaxPoolingLayer:
                         )
 
         return input_gradient
+
+
+class FlattenLayer(AbstractLayer):
+    def __init__(self):
+        """
+        Initialize a flatten layer that transforms multi-dimensional input to 2D.
+        Used to connect convolutional/pooling layers to fully-connected layers.
+        """
+        self.input_shape = None
+        self.output_shape = None
+
+    def forward(self, x: np.ndarray) -> np.ndarray:
+        """
+        Forward pass for flatten layer.
+
+        Args:
+            x: Input of shape (batch_size, channels, height, width)
+
+        Returns:
+            Output of shape (batch_size, channels * height * width)
+        """
+        # Store the input shape for backward pass
+        self.input_shape = x.shape
+        batch_size = x.shape[0]
+
+        # Flatten the input (keep the batch dimension)
+        flattened = x.reshape(batch_size, -1)
+        self.output_shape = flattened.shape
+
+        return flattened
+
+    def backward(self, gradient: np.ndarray, learning_rate: float) -> np.ndarray:
+        """
+        Backward pass for flatten layer.
+
+        Args:
+            gradient: Gradient from next layer of shape (batch_size, flattened_features)
+            learning_rate: Learning rate (not used for flatten layer, but kept for API consistency)
+
+        Returns:
+            Gradient reshaped to match the original input dimensions
+        """
+        # Ensure input shape exists
+        assert self.input_shape is not None, (
+            "Forward pass must be called before backward pass"
+        )
+
+        # Reshape gradient back to the original input shape
+        return gradient.reshape(self.input_shape)
