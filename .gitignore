@@ -10,3 +10,4 @@ wheels/
 .venv
 .pytest_cache
 data/
+vit-base-oxford-iiit-pets

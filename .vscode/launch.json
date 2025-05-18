@@ -1,10 +1,10 @@
 {
     "configurations": [
         {
-            "name": "NN Training",
+            "name": "vit",
             "type": "debugpy",
             "request": "launch",
-            "module": "src.main",
+            "program": "src/vision_transformers/vit.py",
             "console": "integratedTerminal"
         },
         {
